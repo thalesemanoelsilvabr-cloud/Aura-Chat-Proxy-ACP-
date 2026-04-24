@@ -15,7 +15,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NookChat | Aura Inc.</title>
+    <title>AuraChat | Aura Inc.</title>
     <style>
         :root {
             --bg: #0b0c10;
@@ -54,7 +54,7 @@ HTML_TEMPLATE = """
 <div id="app" style="width: 100%;">
     <div id="login-screen" class="screen active">
         <div class="card">
-            <h1>Welcome to NookChat</h1>
+            <h1>Welcome to AuraChat</h1>
             <input type="text" id="userInput" placeholder="Enter your name">
             <button class="btn-gray" id="btnContinue" onclick="toMenu()" disabled style="margin-top: 15px;">Continue</button>
         </div>
@@ -71,7 +71,13 @@ HTML_TEMPLATE = """
     </div>
     <div id="chat-screen" class="screen">
         <div class="chat-header">
-            <div style="width: 80px;">📶</div>
+            <!-- Importe o CSS do Bootstrap Icons no <head> -->
+<link rel="stylesheet" href="https://jsdelivr.net">
+
+<!-- O ícone dentro da div -->
+<div style="width: 80px; font-size: 60px; color: black;">
+    <i class="bi bi-wifi"></i>
+</div>
             <div>🔒 <span id="display-g"></span> 👤 <span id="count">1</span></div>
             <div style="width: 80px; text-align: right;"><span class="share-btn" onclick="shareLink()">🔗 Compartilhar</span></div>
         </div>
