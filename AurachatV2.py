@@ -18,6 +18,10 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AuraChat</title>
+    
+    <meta name="description" content="AuraChat é uma plataforma de conversas seguras, salas privadas em tempo real e chamadas de vídeo automáticas.">
+    <meta name="keywords" content="AuraChat, chat privado, conversas seguras, video chamadas, chat online">
+    
     <style>
         :root {
             --bg: #0b0c10; --card: #1a1b21; --text: #f1f1f1;
@@ -81,7 +85,7 @@ HTML_TEMPLATE = """
         #config-menu { position: fixed; top: 0; right: 0; bottom: 0; width: 280px; background: var(--card); padding: 20px; border-left: 1px solid rgba(128,128,128,0.2); display: none; z-index: 500; box-shadow: -5px 0 15px rgba(0,0,0,0.3); overflow-y: auto; }
         .adm-tag { color: var(--pink); border: 1px solid var(--pink); font-size: 9px; padding: 2px 5px; border-radius: 4px; margin-left: 5px; font-weight: bold; }
         .cfg-label { font-size: 10px; text-transform: uppercase; font-weight: bold; color: var(--sub-text); display: block; margin-top: 15px; margin-bottom: 5px; }
-        .membro-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-b: 1px solid #222; }
+        .membro-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid #222; }
     </style>
 </head>
 <body class="tema-dark">
@@ -97,7 +101,6 @@ HTML_TEMPLATE = """
 </div>
 
 <div id="app" style="width: 100%;">
-    <!-- TELA 1: LOGIN DE NOME (Obrigatório antes de qualquer coisa) -->
     <div id="login-screen" class="screen active">
         <div class="card">
             <h1>Welcome to AuraChat</h1>
@@ -106,7 +109,6 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- TELA 2: MENU PRINCIPAL -->
     <div id="menu-screen" class="screen">
         <div class="card" style="background:transparent; border:none">
             <h1>Aura<span style="color:var(--pink)">Chat</span></h1>
@@ -116,7 +118,6 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- TELA 3: CHAT -->
     <div id="chat-screen" class="screen">
         <div class="chat-header">
             <div style="width: 80px;" id="count-display">📶 0 online</div>
@@ -127,7 +128,6 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- MENU LATERAL DE CONFIGURAÇÕES -->
         <div id="config-menu">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                 <h3 style="margin:0; font-size:16px;">Menu</h3>
@@ -147,8 +147,7 @@ HTML_TEMPLATE = """
                 <option value="tema-cyberpunk">Cyberpunk Neon</option>
             </select>
 
-            <!-- Painel Administrativo Ocultável -->
-            <div id="adm-panel" style="display:none; margin-top:20px; border-t: 1px solid rgba(128,128,128,0.2); padding-top: 10px;">
+            <div id="adm-panel" style="display:none; margin-top:20px; border-top: 1px solid rgba(128,128,128,0.2); padding-top: 10px;">
                 <span class="cfg-label" style="color:var(--pink)">Group Management (ADM)</span>
                 <div id="membros-lista-box" style="margin-top:10px;"></div>
             </div>
@@ -359,12 +358,15 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# O Flask agora tem duas rotas que levam pro mesmo HTML.
-# O Javascript cuida de ler a URL para saber onde estamos.
 @app.route('/')
 @app.route('/chat/<room_code>')
 def home(room_code=None):
     return render_template_string(HTML_TEMPLATE)
+
+@app.route('/robots.txt')
+def robots():
+    """Rota essencial para que os robôs do Google indexem seu app"""
+    return "User-agent: *\\nAllow: /\\n"
 
 @app.route('/receive', methods=['POST'])
 def receive():
