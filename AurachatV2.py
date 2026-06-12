@@ -19,6 +19,8 @@ HTML_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AuraChat</title>
     
+    <meta name="google-site-verification" content="zQLtjHr1rPkPOerwm5y02Vabgk5uak_3kbT4iELGXSA" />
+    
     <meta name="description" content="AuraChat é uma plataforma de conversas seguras, salas privadas em tempo real e chamadas de vídeo automáticas.">
     <meta name="keywords" content="AuraChat, chat privado, conversas seguras, video chamadas, chat online">
     
@@ -240,7 +242,7 @@ HTML_TEMPLATE = """
                 body: JSON.stringify({group: g, old_user: u, new_user: novo})
             });
             u = novo;
-            alert("Nome atualizado!");
+            alert("Nome updated!");
         }
     }
 
