@@ -1,13 +1,13 @@
 import os
 import random
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, request, jsonify, Response
 import logging
 
 app = Flask(__name__)
 chat_history = []
 salas_estado = {}
 
-# Silencia logs do Flask para manter o terminal limpo
+# Silencia logs padrão do Flask para manter o terminal limpo
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
@@ -168,7 +168,6 @@ HTML_TEMPLATE = """
 <script>
     let u="", g="", last=0, stream=null;
     
-    // Captura código na URL se houver (ex: /chat/123)
     const urlParams = window.location.pathname.split('/');
     const roomFromUrl = urlParams.length === 3 && urlParams[1] === 'chat' ? urlParams[2] : null;
 
@@ -181,9 +180,9 @@ HTML_TEMPLATE = """
         
         if (roomFromUrl) {
             g = roomFromUrl;
-            start(); // Se tinha código na url, entra direto no grupo
+            start();
         } else {
-            show('menu-screen'); // Se não, vai pro menu escolher
+            show('menu-screen');
         }
     }
     
@@ -205,7 +204,6 @@ HTML_TEMPLATE = """
         document.getElementById('display-g').innerText = g;
         document.getElementById('newNameInput').value = u;
         
-        // Altera a URL no navegador sem recarregar a página para que possa ser copiada
         window.history.pushState({}, '', '/chat/' + g);
 
         fetch('/join_room', {
@@ -367,8 +365,9 @@ def home(room_code=None):
 
 @app.route('/robots.txt')
 def robots():
-    """Rota essencial para que os robôs do Google indexem seu app"""
-    return "User-agent: *\\nAllow: /\\n"
+    """Garante que os robôs do Google leiam o arquivo perfeitamente como texto puro"""
+    content = "User-agent: *\nAllow: /\n"
+    return Response(content, mimetype='text/plain')
 
 @app.route('/receive', methods=['POST'])
 def receive():
