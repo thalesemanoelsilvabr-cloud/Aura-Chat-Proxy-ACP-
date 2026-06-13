@@ -3,29 +3,31 @@ import time
 
 app = Flask(__name__)
 
-# --- BANCO DE DADOS EM MEMÓRIA ---
-chat_history = []         # Armazena todas as mensagens do chat
+# ==========================================
+# 💾 BANCO DE DADOS EM MEMÓRIA (ESTADOS)
+# ==========================================
+chat_history = []         # Armazena o histórico completo de mensagens (Infinitas)
 usuarios_online = {}      # Estrutura: {"nome_do_grupo": ["Usuario1", "Usuario2"]}
-usuarios_banidos = set()  # Guarda os nomes dos usuários banidos globalmente
+usuarios_banidos = set()  # Guarda a lista negra de usuários banidos globalmente
 
-# --- CONFIGURAÇÕES DO MONITOR DE TRÁFEGO (SISTEMA ANTIDDOS) ---
-historico_trafego = {}    # Estrutura: {"nome_do_grupo": [timestamp1, timestamp2, ...]}
-LIMITE_MENSAGENS = 10     # Máximo de mensagens permitidas na janela de tempo
-JANELA_SEGUNDOS = 3       # Tempo em segundos da janela de análise
-COOLDOWN_ALERTA = 10      # Tempo de espera (em segundos) para não duplicar o alerta emergencial
-ultimos_alertas = {}      # Estrutura: {"nome_do_grupo": timestamp_do_ultimo_alerta}
-
+# ==========================================
+# 🛡️ CONFIGURAÇÕES DO SISTEMA ANTIDDOS AUTOBAN
+# ==========================================
+historico_trafego = {}    # Estrutura: {"nome_do_grupo_usuario": [timestamps]}
+LIMITE_MENSAGENS = 10     # Gatilho de segurança
+JANELA_SEGUNDOS = 3       # Tempo de análise do fluxo
+COOLDOWN_ALERTA = 10      # Evita duplicação do aviso emergencial
+ultimos_alertas = {}      # Registro por grupo
 
 @app.route('/')
 def index():
-    return "AuraChat Backend Protegido rodando com sucesso!"
-
+    return "AuraChat Core + Auto-Ban AntiDDoS rodando!"
 
 @app.route('/receive', methods=['POST'])
 def receive():
     dados = request.json
     if not dados:
-        return jsonify({"status": "error", "message": "Dados inválidos"}), 400
+        return jsonify({"status": "error", "message": "Dados inválidos."}), 400
 
     grupo = dados.get('group')
     usuario = dados.get('user')
@@ -34,69 +36,80 @@ def receive():
     agora = time.time()
 
     if not grupo or not usuario:
-        return jsonify({"status": "error", "message": "Grupo ou usuário ausente"}), 400
+        return jsonify({"status": "error", "message": "Dados obrigatórios ausentes."}), 400
 
-    # 🛡️ BARREIRA 1: VERIFICAÇÃO DE BANIMENTO
+    # ------------------------------------------------------------------
+    # 🔒 SEGURANÇA CAMADA 1: FIREWALL ATIVO (BLOQUEIO COMPLETO)
+    # ------------------------------------------------------------------
     if usuario in usuarios_banidos:
         return jsonify({
             "status": "error", 
-            "message": "🔒 Código Banido: Você foi bloqueado por violação de segurança."
+            "message": "🔒 Código Banido: Seu acesso foi revogado por violação de segurança (DDoS Detectado)."
         }), 403
 
-    # Inicializa as estruturas do grupo se não existirem
     if grupo not in usuarios_online:
         usuarios_online[grupo] = []
-    if grupo not in historico_trafego:
-        historico_trafego[grupo] = []
 
-    # 🛡️ BARREIRA 2: PROCESSA COMANDO DE BANIMENTO DO FRONTEND
+    # ------------------------------------------------------------------
+    # 🔒 SEGURANÇA CAMADA 2: BANIMENTO MANUAL VIA SCRIPT
+    # ------------------------------------------------------------------
     if tipo == "ban_command" and mensagem == "banido":
-        usuarios_banidos.add(usuario)  # Adiciona o invasor na lista negra global
-        
-        # Remove o usuário da lista de online imediatamente, se estiver nela
+        usuarios_banidos.add(usuario)
         if usuario in usuarios_online[grupo]:
             usuarios_online[grupo].remove(usuario)
-            
-        print(f"🛑 [SEGURANÇA] O usuário [{usuario}] foi banido com sucesso.")
+        print(f"🛑 [BAN MANUAL] O usuário [{usuario}] foi banido do servidor.")
         return jsonify({"status": "banned", "usuarios_online": usuarios_online[grupo]})
 
-    # 🛡️ BARREIRA 3: MONITORAMENTO DE REQUISIÇÕES (SISTEMA DE ALERTA DE INUNDAÇÃO)
-    # Registra o timestamp do envio atual
-    historico_trafego[grupo].append(agora)
-
-    # Remove registros antigos que estão fora da janela de 3 segundos
-    historico_trafego[grupo] = [ts for ts in historico_trafego[grupo] if agora - ts <= JANELA_SEGUNDOS]
-
-    # Verifica se a quantidade de mensagens estourou o limite de segurança
-    if len(historico_trafego[grupo]) > LIMITE_MENSAGENS:
-        ultimo_alerta_tempo = ultimos_alertas.get(grupo, 0)
+    # ------------------------------------------------------------------
+    # 🔒 SEGURANÇA CAMADA 3: ANÁLISE HEURÍSTICA E AUTOBAN DE BOTS/DDOS
+    # ------------------------------------------------------------------
+    if usuario not in ["SISTEMA", "🔒 AURA_ALERTAS", "🔒 SEGURANÇA", "Sistema"]:
+        chave_usuario = f"{grupo}_{usuario}"
         
-        # Só dispara o alerta se passou o tempo de cooldown
-        if agora - ultimo_alerta_tempo > COOLDOWN_ALERTA:
-            mensagem_alerta = (
-                "Olá, aqui é da AuraChat Alertas. Porfavor saiam imediatamente desse grupo "
-                "e volt depois de 5 segundos, etsa acontecendo um ataque ddos, e para a sua "
-                "segurança saia, mas tentaremos tirar ele da rede"
-            )
-
-            payload_alerta = {
-                "user": "🔒 AURA_ALERTAS",
-                "group": grupo,
-                "msg": mensagem_alerta,
-                "type": "system_alert",
-                "ts": int(agora * 1000)
-            }
+        if chave_usuario not in historico_trafego:
+            historico_trafego[chave_usuario] = []
             
-            chat_history.append(payload_alerta)
-            ultimos_alertas[grupo] = agora
-            print(f"⚠️ Alerta de inundação disparado no grupo: [{grupo}]")
+        historico_trafego[chave_usuario].append(agora)
+        historico_trafego[chave_usuario] = [ts for ts in historico_trafego[chave_usuario] if agora - ts <= JANELA_SEGUNDOS]
 
-    # ⚙️ 4. PROCESSAMENTO DOS TIPOS DE MENSAGEM PADRÃO
+        # Se estourar a taxa limite na janela de tempo -> BAN NO ATO
+        if len(historico_trafego[chave_usuario]) > LIMITE_MENSAGENS:
+            usuarios_banidos.add(usuario)
+            
+            if usuario in usuarios_online[grupo]:
+                usuarios_online[grupo].remove(usuario)
+                
+            print(f"🚨 [AUTOBAN] Atividade hostil detectada! [{usuario}] foi banido.")
+
+            # Injeção do Alerta de Invasão Exato no Histórico do Grupo
+            ultimo_alerta_tempo = ultimos_alertas.get(grupo, 0)
+            if agora - ultimo_alerta_tempo > COOLDOWN_ALERTA:
+                mensagem_alerta = (
+                    "Olá, aqui é da AuraChat Alertas. Porfavor saiam imediatamente desse grupo "
+                    "e volt depois de 5 segundos, etsa acontecendo um ataque ddos, e para a sua "
+                    "segurança saia, mas tentaremos tirar ele da rede"
+                )
+                chat_history.append({
+                    "user": "🔒 AURA_ALERTAS",
+                    "group": grupo,
+                    "msg": mensagem_alerta,
+                    "type": "system_alert",
+                    "ts": int(agora * 1000)
+                })
+                ultimos_alertas[grupo] = agora
+
+            return jsonify({
+                "status": "error", 
+                "message": "🔒 Código Banido por atividade maliciosa de DDoS."
+            }), 403
+
+    # ------------------------------------------------------------------
+    # ⚙️ FLUXO APLICATIVO ORIGINAL (SEM ALTERAÇÕES)
+    # ------------------------------------------------------------------
     if tipo == "status":
         if mensagem == "offline":
             if usuario in usuarios_online[grupo]:
                 usuarios_online[grupo].remove(usuario)
-            
             chat_history.append({
                 "user": "Sistema",
                 "group": grupo,
@@ -106,29 +119,23 @@ def receive():
             })
         return jsonify({"status": "ok", "usuarios_online": usuarios_online[grupo]})
 
-    # Gerenciamento de presença para mensagens de texto comuns
-    # Adiciona o usuário na lista de online se ele não constava lá e não é uma entidade do sistema
-    if usuario not in usuarios_online[grupo] and usuario not in ["SISTEMA", "🔒 AURA_ALERTAS", "🔒 SEGURANÇA", "Sistema"]:
+    entidades_sistema = ["SISTEMA", "🔒 AURA_ALERTAS", "🔒 SEGURANÇA", "Sistema"]
+    if usuario not in usuarios_online[grupo] and usuario not in entidades_sistema:
         usuarios_online[grupo].append(usuario)
 
-    # Salva a mensagem recebida no histórico global
     chat_history.append(dados)
     return jsonify({"status": "ok", "usuarios_online": usuarios_online[grupo]})
 
 
 @app.route('/history/<nome_grupo>', methods=['GET'])
 def get_history(nome_grupo):
-    """Rota para o JavaScript buscar as mensagens e os usuários online atualizados"""
     mensagens_grupo = [msg for msg in chat_history if msg.get('group') == nome_grupo]
     online = usuarios_online.get(nome_grupo, [])
-    
     return jsonify({
         "messages": mensagens_grupo,
         "usuarios_online": online
     })
 
-
-# Configuração necessária para rodar localmente ou expor para plataformas Web
 handler = app 
 
 if __name__ == '__main__':
