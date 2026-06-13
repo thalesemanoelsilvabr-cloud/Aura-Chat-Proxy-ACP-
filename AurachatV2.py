@@ -1,6 +1,5 @@
 import os
 import random
-import time
 from flask import Flask, render_template_string, request, jsonify
 import logging
 
@@ -8,7 +7,7 @@ app = Flask(__name__)
 chat_history = []
 salas_estado = {}
 
-# Silencia logs padrão do Flask no terminal para melhor visualização
+# Silencia logs do Flask para manter o terminal limpo
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
@@ -233,7 +232,7 @@ HTML_TEMPLATE = """
                 body: JSON.stringify({group: g, old_user: u, new_user: novo})
             });
             u = novo;
-            alert("Nome updated!");
+            alert("Nome atualizado!");
         }
     }
 
@@ -302,7 +301,7 @@ HTML_TEMPLATE = """
                 })
             });
 
-            # Comando definitivo de banimento enviado para o servidor
+            // Comando definitivo de banimento enviado para o servidor (Corrigido para //)
             await fetch('/receive', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -439,7 +438,7 @@ def receive():
     if not grupo or not usuario:
         return jsonify({"status": "error", "message": "Dados obrigatórios ausentes."}), 400
 
-    # 🛡️ FIREWALL DE BANIDOS (Corta o acesso imediatamente se o usuário estiver banido)
+    # 🛡️ FIREWALL DE BANIDOS
     if grupo in salas_estado and usuario in salas_estado[grupo].get('banidos', set()):
         return jsonify({"status": "error", "message": "🔒 Código Banido por violação de segurança."}), 403
 
@@ -452,7 +451,6 @@ def receive():
         print(f"🛑 [SEGURANÇA] O usuário [{usuario}] errou a senha do script e foi BANIDO com status 403.")
         return jsonify({"status": "error", "message": "🔒 Código Banido por atividade não autorizada."}), 403
 
-    # MENSAGENS COMUNS E ENVIOS DE BOT AUTORIZADOS SÃO GRAVADOS DE FORMA INFINITA
     chat_history.append(dados)
     return jsonify({"status": "ok"})
 
