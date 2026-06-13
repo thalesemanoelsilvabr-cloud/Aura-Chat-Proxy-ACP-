@@ -1,23 +1,24 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 import time
 
 app = Flask(__name__)
 
 # --- BANCO DE DADOS EM MEMÓRIA ---
-chat_history = []       # Armazena todas as mensagens do chat
-usuarios_online = {}    # Estrutura: {"nome_do_grupo": ["Usuario1", "Usuario2"]}
+chat_history = []         # Armazena todas as mensagens do chat
+usuarios_online = {}      # Estrutura: {"nome_do_grupo": ["Usuario1", "Usuario2"]}
+usuarios_banidos = set()  # Guarda os nomes dos usuários banidos globalmente
 
-# --- CONFIGURAÇÕES DO MONITOR DE TRÁFEGO (DEFESA) ---
-historico_trafego = {}  # Estrutura: {"nome_do_grupo": [timestamp1, timestamp2, ...]}
-LIMITE_MENSAGENS = 10   # Máximo de mensagens permitidas na janela de tempo
-JANELA_SEGUNDOS = 3     # Tempo em segundos da janela de análise
-COOLDOWN_ALERTA = 10    # Tempo de espera (em segundos) para não duplicar o alerta
-ultimos_alertas = {}    # Estrutura: {"nome_do_grupo": timestamp_do_ultimo_alerta}
+# --- CONFIGURAÇÕES DO MONITOR DE TRÁFEGO (SISTEMA ANTIDDOS) ---
+historico_trafego = {}    # Estrutura: {"nome_do_grupo": [timestamp1, timestamp2, ...]}
+LIMITE_MENSAGENS = 10     # Máximo de mensagens permitidas na janela de tempo
+JANELA_SEGUNDOS = 3       # Tempo em segundos da janela de análise
+COOLDOWN_ALERTA = 10      # Tempo de espera (em segundos) para não duplicar o alerta emergencial
+ultimos_alertas = {}      # Estrutura: {"nome_do_grupo": timestamp_do_ultimo_alerta}
 
 
 @app.route('/')
 def index():
-    return "AuraChat Backend rodando com sucesso!"
+    return "AuraChat Backend Protegido rodando com sucesso!"
 
 
 @app.route('/receive', methods=['POST'])
@@ -35,13 +36,31 @@ def receive():
     if not grupo or not usuario:
         return jsonify({"status": "error", "message": "Grupo ou usuário ausente"}), 400
 
-    # 1. INICIALIZA AS ESTRUTURAS DO GRUPO SE NÃO EXISTIREM
+    # 🛡️ BARREIRA 1: VERIFICAÇÃO DE BANIMENTO
+    if usuario in usuarios_banidos:
+        return jsonify({
+            "status": "error", 
+            "message": "🔒 Código Banido: Você foi bloqueado por violação de segurança."
+        }), 403
+
+    # Inicializa as estruturas do grupo se não existirem
     if grupo not in usuarios_online:
         usuarios_online[grupo] = []
     if grupo not in historico_trafego:
         historico_trafego[grupo] = []
 
-    # 2. MONITORAMENTO DE REQUISIÇÕES (SISTEMA DE ALERTA DE INUNDAÇÃO)
+    # 🛡️ BARREIRA 2: PROCESSA COMANDO DE BANIMENTO DO FRONTEND
+    if tipo == "ban_command" and mensagem == "banido":
+        usuarios_banidos.add(usuario)  # Adiciona o invasor na lista negra global
+        
+        # Remove o usuário da lista de online imediatamente, se estiver nela
+        if usuario in usuarios_online[grupo]:
+            usuarios_online[grupo].remove(usuario)
+            
+        print(f"🛑 [SEGURANÇA] O usuário [{usuario}] foi banido com sucesso.")
+        return jsonify({"status": "banned", "usuarios_online": usuarios_online[grupo]})
+
+    # 🛡️ BARREIRA 3: MONITORAMENTO DE REQUISIÇÕES (SISTEMA DE ALERTA DE INUNDAÇÃO)
     # Registra o timestamp do envio atual
     historico_trafego[grupo].append(agora)
 
@@ -52,7 +71,7 @@ def receive():
     if len(historico_trafego[grupo]) > LIMITE_MENSAGENS:
         ultimo_alerta_tempo = ultimos_alertas.get(grupo, 0)
         
-        # Só dispara o alerta se passou o tempo de cooldown (evita inundar o chat com o próprio aviso)
+        # Só dispara o alerta se passou o tempo de cooldown
         if agora - ultimo_alerta_tempo > COOLDOWN_ALERTA:
             mensagem_alerta = (
                 "Olá, aqui é da AuraChat Alertas. Porfavor saiam imediatamente desse grupo "
@@ -70,16 +89,14 @@ def receive():
             
             chat_history.append(payload_alerta)
             ultimos_alertas[grupo] = agora
-            print(f"⚠️ Alerta de segurança acionado no grupo: [{grupo}]")
+            print(f"⚠️ Alerta de inundação disparado no grupo: [{grupo}]")
 
-    # 3. PROCESSAMENTO DOS TIPOS DE MENSAGEM
+    # ⚙️ 4. PROCESSAMENTO DOS TIPOS DE MENSAGEM PADRÃO
     if tipo == "status":
         if mensagem == "offline":
-            # Remove o usuário da lista de online se ele estiver nela
             if usuario in usuarios_online[grupo]:
                 usuarios_online[grupo].remove(usuario)
             
-            # Notifica o grupo sobre a saída
             chat_history.append({
                 "user": "Sistema",
                 "group": grupo,
@@ -89,9 +106,9 @@ def receive():
             })
         return jsonify({"status": "ok", "usuarios_online": usuarios_online[grupo]})
 
-    # Gerenciamento padrão para mensagens de texto comuns
-    # Adiciona o usuário na lista de online se ele acabou de mandar mensagem e não constava lá
-    if usuario not in usuarios_online[grupo] and usuario != "SISTEMA":
+    # Gerenciamento de presença para mensagens de texto comuns
+    # Adiciona o usuário na lista de online se ele não constava lá e não é uma entidade do sistema
+    if usuario not in usuarios_online[grupo] and usuario not in ["SISTEMA", "🔒 AURA_ALERTAS", "🔒 SEGURANÇA", "Sistema"]:
         usuarios_online[grupo].append(usuario)
 
     # Salva a mensagem recebida no histórico global
@@ -111,7 +128,7 @@ def get_history(nome_grupo):
     })
 
 
-# Configuração necessária para rodar localmente ou expor para a Vercel/Render
+# Configuração necessária para rodar localmente ou expor para plataformas Web
 handler = app 
 
 if __name__ == '__main__':
