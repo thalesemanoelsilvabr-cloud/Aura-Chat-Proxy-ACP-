@@ -4,10 +4,10 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'chave_secreta_aurachat_2026'
+app.config['SECRET_KEY'] = 'aurachat_v2_secret_key'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# --- INICIALIZAÇÃO DO BANCO DE DADOS ---
+# --- BANCO DE DADOS ---
 def init_db():
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
@@ -28,14 +28,14 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-# --- TEMPLATES HTML EMBUTIDOS ---
+# --- HTML EMBUTIDO ---
 
 HTML_REGISTER = '''
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>Cadastro - AuraChat</title>
+    <title>AuraChat V2 - Cadastro</title>
     <style>
         body { font-family: Arial, sans-serif; background: #121212; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
         .box { background: #1e1e1e; padding: 30px; border-radius: 10px; width: 300px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
@@ -53,7 +53,7 @@ HTML_REGISTER = '''
           {% if messages %}<p class="flash">{{ messages[0] }}</p>{% endif %}
         {% endwith %}
         <form method="POST">
-            <input type="text" name="username" placeholder="Nome de usuário" required><br>
+            <input type="text" name="username" placeholder="Usuário" required><br>
             <input type="password" name="password" placeholder="Senha" required><br>
             <button type="submit">Cadastrar</button>
         </form>
@@ -68,7 +68,7 @@ HTML_LOGIN = '''
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>Login - AuraChat</title>
+    <title>AuraChat V2 - Login</title>
     <style>
         body { font-family: Arial, sans-serif; background: #121212; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
         .box { background: #1e1e1e; padding: 30px; border-radius: 10px; width: 300px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
@@ -81,7 +81,7 @@ HTML_LOGIN = '''
 </head>
 <body>
     <div class="box">
-        <h2>Entrar</h2>
+        <h2>AuraChat V2</h2>
         {% with messages = get_flashed_messages() %}
           {% if messages %}<p class="flash">{{ messages[0] }}</p>{% endif %}
         {% endwith %}
@@ -101,7 +101,7 @@ HTML_ROOM = '''
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>Sala de Áudio</title>
+    <title>AuraChat V2 - Sala de Áudio</title>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding: 40px; }
@@ -115,17 +115,17 @@ HTML_ROOM = '''
 </head>
 <body>
     <div class="container">
-        <h2>🎙️ Sala de Áudio</h2>
+        <h2>🎙️ Sala de Áudio V2</h2>
         <p>Conectado como: <strong>{{ username }}</strong></p>
         
         <button id="mute-btn" class="btn-muta" onclick="toggleMute()">Mutar Microfone</button>
         
-        <h3>Participantes On-line</h3>
+        <h3>Participantes Online</h3>
         <ul id="user-list">
             <li>🟢 Você ({{ username }})</li>
         </ul>
 
-        <a href="/logout" class="btn-logout">Sair da conta</a>
+        <a href="/logout" class="btn-logout">Sair</a>
     </div>
 
     <div id="audio-containers"></div>
@@ -145,7 +145,7 @@ HTML_ROOM = '''
                 localStream = stream;
                 socket.emit('join');
             })
-            .catch(err => alert("Por favor, permita o acesso ao microfone."));
+            .catch(err => alert("Acesso ao microfone é necessário para participar da chamada."));
 
         socket.on('user-connected', data => {
             createPeerConnection(data.sid, true);
@@ -235,7 +235,7 @@ HTML_ROOM = '''
 </html>
 '''
 
-# --- ROTAS DA APLICAÇÃO ---
+# --- ROTAS ---
 
 @app.route('/')
 def home():
@@ -260,11 +260,11 @@ def register():
             conn.execute('INSERT INTO users (username, password) VALUES (?, ?)', (username, hashed_password))
             conn.commit()
             conn.close()
-            flash('Cadastro realizado! Faça login para continuar.')
+            flash('Cadastro realizado com sucesso!')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
             conn.close()
-            flash('Este usuário já está cadastrado.')
+            flash('Nome de usuário já cadastrado.')
             return redirect(url_for('register'))
 
     return render_template_string(HTML_REGISTER)
@@ -283,7 +283,7 @@ def login():
             session['username'] = user['username']
             return redirect(url_for('room'))
         else:
-            flash('Usuário ou senha incorretos.')
+            flash('Usuário ou senha inválidos.')
 
     return render_template_string(HTML_LOGIN)
 
@@ -298,7 +298,7 @@ def room():
         return redirect(url_for('login'))
     return render_template_string(HTML_ROOM, username=session['username'])
 
-# --- WEBRTC SIGNALING ---
+# --- SINALIZAÇÃO WEBRTC ---
 
 ROOM_ID = "sala_principal"
 
