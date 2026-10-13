@@ -186,7 +186,8 @@ HTML_TEMPLATE = """
 </div>
 
 <script>
-    let u="", g="", last=0, stream=null;
+    let u="", g="", stream=null;
+    let emSync = false;
 
     const urlParams = window.location.pathname.split('/');
     const roomFromUrl = urlParams.length === 3 && urlParams[1] === 'chat' ? urlParams[2] : null;
@@ -217,8 +218,9 @@ HTML_TEMPLATE = """
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({user: u, group: g})
+        }).then(() => {
+            syncLoop();
         });
-        setInterval(sync, 1000);
     }
 
     function show(id) {
@@ -233,13 +235,19 @@ HTML_TEMPLATE = """
         if(type === "voice_call") val = "🎙️ Chamada de voz iniciada";
         if(!val && type === "text") return;
 
-        await fetch('/receive', { 
-            method: 'POST', 
-            headers: {'Content-Type': 'application/json'}, 
-            body: JSON.stringify({user: u, group: g, msg: val, type: type, ts: Date.now()}) 
-        });
         if(!customMsg) i.value='';
         document.getElementById('emoji-picker').style.display = 'none';
+
+        try {
+            await fetch('/receive', { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify({user: u, group: g, msg: val, type: type, ts: Date.now()}) 
+            });
+            sync(); // Sincroniza imediatamente após enviar
+        } catch(e) {
+            console.error("Erro ao enviar mensagem:", e);
+        }
     }
 
     function toggleEmoji() {
@@ -369,84 +377,101 @@ HTML_TEMPLATE = """
         }
     }
 
+    // Sincronização inteligente com o Python (envia o ID da última mensagem para baixar só as novas)
+    let ultimoIndice = 0;
+
     async function sync() {
-        const metaRes = await fetch(`/room_info?group=${g}&user=${u}`);
-        const meta = await metaRes.json();
-        
-        if (meta.kicked_or_banned) {
-            alert("Você foi removido ou bloqueado deste grupo.");
-            location.href = '/';
-            return;
-        }
+        if (emSync) return;
+        emSync = true;
 
-        document.getElementById('count-display').innerText = `📶 ${meta.qtd} online`;
-
-        const isAdm = meta.adms && meta.adms.includes(u);
-        if(isAdm) {
-            document.getElementById('adm-badge').innerHTML = '<span class="adm-tag">ADM</span>';
-            document.getElementById('adm-panel').style.display = 'block';
+        try {
+            const metaRes = await fetch(`/room_info?group=${g}&user=${u}`);
+            const meta = await metaRes.json();
             
-            const listContainer = document.getElementById('membros-lista-box');
-            listContainer.innerHTML = '';
-            meta.membros.forEach(m => {
-                if(m !== u) {
-                    const eAdmin = meta.adms.includes(m);
-                    const row = document.createElement('div');
-                    row.className = 'membro-row';
-                    row.innerHTML = `
-                        <span>${m} ${eAdmin ? '<b style="color:var(--pink)">(ADM)</b>' : ''}</span>
-                        <div>
-                            ${eAdmin ? 
-                                `<span onclick="rebaixarADM('${m}')" style="color:yellow; cursor:pointer; margin-right:5px;">-ADM</span>` : 
-                                `<span onclick="promoverADM('${m}')" style="color:green; cursor:pointer; margin-right:5px;">+ADM</span>`
-                            }
-                            <span onclick="expulsar('${m}')" style="color:orange; cursor:pointer; margin-right:5px;">Excluir</span>
-                            <span onclick="bloquear('${m}')" style="color:var(--pink); cursor:pointer;">Bloquear</span>
-                        </div>
-                    `;
-                    listContainer.appendChild(row);
-                }
-            });
-        } else {
-            document.getElementById('adm-badge').innerHTML = '';
-            document.getElementById('adm-panel').style.display = 'none';
-        }
-
-        const r = await fetch('/messages');
-        const data = await r.json();
-        const filtered = data.filter(m => m.group === g);
-
-        if(filtered.length > last) {
-            const flow = document.getElementById('messages-flow');
-
-            for(let i=last; i<filtered.length; i++) {
-                const m = filtered[i];
-                const container = document.createElement('div');
-                const isMine = m.user === u;
-                container.className = `msg-container ${isMine ? 'mine' : 'others'}`;
-
-                if(m.type === "call" || m.type === "voice_call") {
-                    container.className = "msg-container others";
-                    container.innerHTML = `
-                        <span class="msg-nick">${m.user}</span>
-                        <div class="bubble" style="background:var(--green)">
-                            ${m.type === "call" ? "iniciou vídeo." : "iniciou chamada de voz."}<br>
-                            <button onclick="startCall('${m.type === "call" ? "video" : "voice"}')" style="background:white; color:black; margin-top:5px; padding:3px 10px; font-size:10px; border-radius:6px;">ENTRAR</button>
-                        </div>`;
-                } else if(m.type === "image") {
-                    container.innerHTML = `
-                        <span class="msg-nick">${isMine ? 'you' : m.user}</span>
-                        <div class="bubble"><img src="${m.msg}" /></div>`;
-                } else {
-                    container.innerHTML = `
-                        <span class="msg-nick">${isMine ? 'you' : m.user}</span>
-                        <div class="bubble">${m.msg}</div>`;
-                }
-                flow.appendChild(container);
+            if (meta.kicked_or_banned) {
+                alert("Você foi removido ou bloqueado deste grupo.");
+                location.href = '/';
+                return;
             }
-            last = filtered.length;
-            flow.scrollTop = flow.scrollHeight;
+
+            document.getElementById('count-display').innerText = `📶 ${meta.qtd} online`;
+
+            const isAdm = meta.adms && meta.adms.includes(u);
+            if(isAdm) {
+                document.getElementById('adm-badge').innerHTML = '<span class="adm-tag">ADM</span>';
+                document.getElementById('adm-panel').style.display = 'block';
+                
+                const listContainer = document.getElementById('membros-lista-box');
+                listContainer.innerHTML = '';
+                meta.membros.forEach(m => {
+                    if(m !== u) {
+                        const eAdmin = meta.adms.includes(m);
+                        const row = document.createElement('div');
+                        row.className = 'membro-row';
+                        row.innerHTML = `
+                            <span>${m} ${eAdmin ? '<b style="color:var(--pink)">(ADM)</b>' : ''}</span>
+                            <div>
+                                ${eAdmin ? 
+                                    `<span onclick="rebaixarADM('${m}')" style="color:yellow; cursor:pointer; margin-right:5px;">-ADM</span>` : 
+                                    `<span onclick="promoverADM('${m}')" style="color:green; cursor:pointer; margin-right:5px;">+ADM</span>`
+                                }
+                                <span onclick="expulsar('${m}')" style="color:orange; cursor:pointer; margin-right:5px;">Excluir</span>
+                                <span onclick="bloquear('${m}')" style="color:var(--pink); cursor:pointer;">Bloquear</span>
+                            </div>
+                        `;
+                        listContainer.appendChild(row);
+                    }
+                });
+            } else {
+                document.getElementById('adm-badge').innerHTML = '';
+                document.getElementById('adm-panel').style.display = 'none';
+            }
+
+            // Pede ao Python apenas as mensagens a partir do último índice da sala
+            const r = await fetch(`/messages?group=${g}&since=${ultimoIndice}`);
+            const novasMensagens = await r.json();
+
+            if (novasMensagens.length > 0) {
+                const flow = document.getElementById('messages-flow');
+
+                novasMensagens.forEach(m => {
+                    const container = document.createElement('div');
+                    const isMine = m.user === u;
+                    container.className = `msg-container ${isMine ? 'mine' : 'others'}`;
+
+                    if(m.type === "call" || m.type === "voice_call") {
+                        container.className = "msg-container others";
+                        container.innerHTML = `
+                            <span class="msg-nick">${m.user}</span>
+                            <div class="bubble" style="background:var(--green)">
+                                ${m.type === "call" ? "iniciou vídeo." : "iniciou chamada de voz."}<br>
+                                <button onclick="startCall('${m.type === "call" ? "video" : "voice"}')" style="background:white; color:black; margin-top:5px; padding:3px 10px; font-size:10px; border-radius:6px;">ENTRAR</button>
+                            </div>`;
+                    } else if(m.type === "image") {
+                        container.innerHTML = `
+                            <span class="msg-nick">${isMine ? 'you' : m.user}</span>
+                            <div class="bubble"><img src="${m.msg}" /></div>`;
+                    } else {
+                        container.innerHTML = `
+                            <span class="msg-nick">${isMine ? 'you' : m.user}</span>
+                            <div class="bubble">${m.msg}</div>`;
+                    }
+                    flow.appendChild(container);
+                });
+
+                ultimoIndice += novasMensagens.length;
+                flow.scrollTop = flow.scrollHeight;
+            }
+        } catch(e) {
+            console.error("Erro na sincronização:", e);
+        } finally {
+            emSync = false;
         }
+    }
+
+    function syncLoop() {
+        sync();
+        setTimeout(syncLoop, 1500); // Intervalo controlado de 1.5s
     }
 </script>
 </body>
@@ -473,9 +498,18 @@ def receive():
     chat_history.append(dados)
     return jsonify({"status": "ok"})
 
+# OTIMIZAÇÃO NO PYTHON: Retorna apenas as mensagens da sala solicitada a partir do índice 'since'
 @app.route('/messages')
 def messages(): 
-    return jsonify(chat_history)
+    grupo = request.args.get('group')
+    since = int(request.args.get('since', 0))
+    
+    # Filtra mensagens apenas da sala do usuário
+    mensagens_sala = [m for m in chat_history if m.get('group') == grupo]
+    
+    # Retorna somente os novos itens a partir da posição 'since'
+    novas = mensagens_sala[since:]
+    return jsonify(novas)
 
 @app.route('/join_room', methods=['POST'])
 def join_room_route():
