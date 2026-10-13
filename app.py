@@ -1,11 +1,18 @@
 import os
 import random
 import logging
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 
 app = Flask(__name__)
+app.secret_key = "aura_chat_super_secreto_token_2016"  # Necessário para gerenciar a sessão do /admin
+
+# Senha mestre solicitada para entrar no painel admin global
+SENHA_ADMIN_MESTRE = "2015"
+
 chat_history = []
 salas_estado = {}
+# Mapeamento para rastrear sessões/tokens ativos e impedir burlas de banimento por mudança de nome
+sessoes_ativas = {}
 
 # Silencia logs do Flask para manter o terminal limpo
 log = logging.getLogger('werkzeug')
@@ -205,19 +212,25 @@ HTML_TEMPLATE = """
 <script>
     let u="", g="", last=0, stream=null;
     let audioCtx = null;
+    
+    // Gera um identificador único seguro (Token de Sessão) salvo no navegador para evitar falsificação por nome
+    let token = localStorage.getItem('aurachat_token');
+    if (!token) {
+        token = 'tk_' + Math.random().toString(36).substr(2, 9) + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('aurachat_token', token);
+    }
 
     const urlParams = window.location.pathname.split('/');
     const roomFromUrl = urlParams.length === 3 && urlParams[1] === 'chat' ? urlParams[2] : null;
 
-    // Toca som sintético de notificação (sem dependência externa)
     function playNotificationSound() {
         try {
             if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.type = 'sine';
-            osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
-            osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15); // A5
+            osc.frequency.setValueAtTime(587.33, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15);
             gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
             osc.connect(gain);
@@ -252,7 +265,7 @@ HTML_TEMPLATE = """
         fetch('/join_room', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({user: u, group: g})
+            body: JSON.stringify({user: u, group: g, token: token})
         });
         setInterval(sync, 1000);
     }
@@ -272,7 +285,7 @@ HTML_TEMPLATE = """
         await fetch('/receive', { 
             method: 'POST', 
             headers: {'Content-Type': 'application/json'}, 
-            body: JSON.stringify({user:u, group:g, msg:val, type:type, ts:Date.now()}) 
+            body: JSON.stringify({user: u, group: g, msg: val, type: type, token: token, ts: Date.now()}) 
         });
         if(!customMsg) i.value='';
         document.getElementById('emoji-picker').style.display = 'none';
@@ -299,11 +312,16 @@ HTML_TEMPLATE = """
 
     async function alterarNome() {
         let novo = document.getElementById('newNameInput').value.trim();
+        // Impede que usuários comuns tentem assumir a identidade de admin apenas mudando o nome
+        if(novo.toLowerCase() === 'admin') {
+            alert("O nome 'admin' é protegido pelo sistema de segurança.");
+            return;
+        }
         if(novo && novo !== u) {
             await fetch('/change_name', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({group: g, old_user: u, new_user: novo})
+                body: JSON.stringify({group: g, token: token, new_user: novo})
             });
             u = novo;
             alert("Nome atualizado!");
@@ -312,35 +330,34 @@ HTML_TEMPLATE = """
 
     function mudarTema(tema) { document.body.className = tema; }
 
-    async function promoverADM(alvo) {
+    async function promoverADM(alvoToken) {
         await fetch('/add_adm', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({group: g, user: alvo})
+            body: JSON.stringify({group: g, target_token: alvoToken, token: token})
         });
     }
 
-    async function rebaixarADM(alvo) {
+    async function rebaixarADM(alvoToken) {
         await fetch('/remove_adm', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({group: g, user: alvo})
+            body: JSON.stringify({group: g, target_token: alvoToken, token: token})
         });
     }
 
-    async function expulsar(alvo) {
+    async function expulsar(alvoToken) {
         await fetch('/kick', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({group: g, user: alvo})
+            body: JSON.stringify({group: g, target_token: alvoToken, token: token})
         });
     }
 
-    async function bloquear(alvo) {
+    async function bloquear(alvoToken) {
         await fetch('/ban', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({group: g, user: alvo})
+            body: JSON.stringify({group: g, target_token: alvoToken, token: token})
         });
     }
 
-    /* WEBRTC / CALLS */
     async function startCall(mode='video') {
         send(mode === 'video' ? "call" : "voice_call");
         document.getElementById('call-ui').style.display='flex';
@@ -370,7 +387,6 @@ HTML_TEMPLATE = """
         m.style.display = (m.style.display === 'block') ? 'none' : 'block';
     }
 
-    /* SITEMA DE JOGOS INTEGRADO */
     function openGamesMenu() {
         const choice = prompt("Escolha o jogo:\\n1. Fuga da Maçã (Multiplayer)\\n2. Jogo da Velha\\n3. Eaglecraft (Minecraft JS)\\n4. Google+ Nostalgia");
         if(choice === '1') startFugaMaca();
@@ -392,7 +408,6 @@ HTML_TEMPLATE = """
         document.getElementById('game-chat-box').style.display = 'none';
     }
 
-    /* Jogo 1: Fuga da Maçã Multiplayer */
     let macaPos = {x: 50, y: 50}, playerPos = {x: 200, y: 200};
     function startFugaMaca() {
         document.getElementById('game-title').innerText = "Fuga da Maçã (Multiplayer)";
@@ -417,11 +432,9 @@ HTML_TEMPLATE = """
             if(document.getElementById('game-ui').style.display === 'none') return;
             ctx.clearRect(0,0,canvas.width, canvas.height);
             
-            // Desenha a Maçã
             ctx.fillStyle = "red";
             ctx.beginPath(); ctx.arc(macaPos.x, macaPos.y, 15, 0, Math.PI*2); ctx.fill();
 
-            // Desenha Jogador
             ctx.fillStyle = "#00ffcc";
             ctx.fillRect(playerPos.x, playerPos.y, 20, 20);
             ctx.fillStyle = "white"; ctx.fillText(u, playerPos.x - 5, playerPos.y - 5);
@@ -431,7 +444,6 @@ HTML_TEMPLATE = """
         loop();
     }
 
-    /* Jogo 2: Jogo da Velha */
     function startJogoDaVelha() {
         document.getElementById('game-title').innerText = "Jogo da Velha";
         document.getElementById('game-container').innerHTML = `
@@ -460,20 +472,19 @@ HTML_TEMPLATE = """
         }
     }
 
-    /* Sincronização Geral */
     async function sync() {
-        const metaRes = await fetch(`/room_info?group=${g}&user=${u}`);
+        const metaRes = await fetch(`/room_info?group=${g}&token=${token}`);
         const meta = await metaRes.json();
         
         if (meta.kicked_or_banned) {
-            alert("Você foi removido ou bloqueado deste grupo.");
+            alert("Você foi removido ou bloqueado deste grupo por violação de segurança.");
             location.href = '/';
             return;
         }
 
         document.getElementById('count-display').innerText = `📶 ${meta.qtd} online`;
 
-        const isAdm = meta.adms && meta.adms.includes(u);
+        const isAdm = meta.adms && meta.adms.includes(token);
         if(isAdm) {
             document.getElementById('adm-badge').innerHTML = '<span class="adm-tag">ADM</span>';
             document.getElementById('adm-panel').style.display = 'block';
@@ -481,19 +492,18 @@ HTML_TEMPLATE = """
             const listContainer = document.getElementById('membros-lista-box');
             listContainer.innerHTML = '';
             meta.membros.forEach(m => {
-                if(m !== u) {
-                    const eAdmin = meta.adms.includes(m);
+                if(m.token !== token) {
                     const row = document.createElement('div');
                     row.className = 'membro-row';
                     row.innerHTML = `
-                        <span>${m} ${eAdmin ? '<b style="color:var(--pink)">(ADM)</b>' : ''}</span>
+                        <span>${m.user} ${m.is_adm ? '<b style="color:var(--pink)">(ADM)</b>' : ''}</span>
                         <div>
-                            ${eAdmin ? 
-                                `<span onclick="rebaixarADM('${m}')" style="color:yellow; cursor:pointer; margin-right:5px;">-ADM</span>` : 
-                                `<span onclick="promoverADM('${m}')" style="color:green; cursor:pointer; margin-right:5px;">+ADM</span>`
+                            ${m.is_adm ? 
+                                `<span onclick="rebaixarADM('${m.token}')" style="color:yellow; cursor:pointer; margin-right:5px;">-ADM</span>` : 
+                                `<span onclick="promoverADM('${m.token}')" style="color:green; cursor:pointer; margin-right:5px;">+ADM</span>`
                             }
-                            <span onclick="expulsar('${m}')" style="color:orange; cursor:pointer; margin-right:5px;">Excluir</span>
-                            <span onclick="bloquear('${m}')" style="color:var(--pink); cursor:pointer;">Bloquear</span>
+                            <span onclick="expulsar('${m.token}')" style="color:orange; cursor:pointer; margin-right:5px;">Excluir</span>
+                            <span onclick="bloquear('${m.token}')" style="color:var(--pink); cursor:pointer;">Bloquear</span>
                         </div>
                     `;
                     listContainer.appendChild(row);
@@ -514,10 +524,10 @@ HTML_TEMPLATE = """
 
             for(let i=last; i<filtered.length; i++) {
                 const m = filtered[i];
-                if(i > 0 && m.user !== u) playNotificationSound();
+                if(i > 0 && m.token !== token) playNotificationSound();
 
                 const container = document.createElement('div');
-                const isMine = m.user === u;
+                const isMine = m.token === token;
                 container.className = `msg-container ${isMine ? 'mine' : 'others'}`;
 
                 if(m.type === "call" || m.type === "voice_call") {
@@ -532,11 +542,6 @@ HTML_TEMPLATE = """
                     container.innerHTML = `
                         <span class="msg-nick">${isMine ? 'you' : m.user}</span>
                         <div class="bubble"><img src="${m.msg}" /></div>`;
-                } else if(m.type === "system_alert") {
-                    container.className = "msg-container others"; container.style.width = "100%";
-                    container.innerHTML = `
-                        <span class="msg-nick" style="color:red">🔒 ALERTA DE SISTEMA</span>
-                        <div class="bubble" style="background:#5c061a; border: 1px solid red; color: #ff9999;">${m.msg}</div>`;
                 } else {
                     container.innerHTML = `
                         <span class="msg-nick">${isMine ? 'you' : m.user}</span>
@@ -544,7 +549,6 @@ HTML_TEMPLATE = """
                 }
                 flow.appendChild(container);
 
-                // Sincroniza chat secundário do jogo
                 if(gMsgs) {
                     const gLine = document.createElement('div');
                     gLine.innerText = `${m.user}: ${m.msg}`;
@@ -566,6 +570,78 @@ HTML_TEMPLATE = """
 def home(room_code=None):
     return render_template_string(HTML_TEMPLATE)
 
+# ==========================================
+# PAINEL ADMIN MASTER SEGURO (/adimin/chat/hufg)
+# ==========================================
+ADMIN_PANEL_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Painel Admin Mestre - AuraChat</title>
+    <style>
+        body { background: #0b0c10; color: #f1f1f1; font-family: sans-serif; padding: 20px; }
+        .card { background: #1a1b21; padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #333; }
+        input { padding: 10px; border-radius: 8px; border: none; background: #2a2c33; color: white; width: 250px; }
+        button { padding: 10px 15px; border-radius: 8px; border: none; background: #f34a74; color: white; cursor: pointer; font-weight: bold; }
+        pre { background: #111; padding: 15px; border-radius: 8px; overflow-x: auto; color: #00ffcc; }
+    </style>
+</head>
+<body>
+    <h1>🔒 Painel Master do Sistema (/adimin/chat/hufg)</h1>
+    {% if not session.get('is_admin') %}
+    <div class="card">
+        <h3>Autenticação Necessária</h3>
+        <form method="POST">
+            <input type="password" name="senha" placeholder="Digite a senha mestre..." required>
+            <button type="submit">Entrar</button>
+        </form>
+        {% if erro %}<p style="color:red;">{{ erro }}</p>{% endif %}
+    </div>
+    {% else %}
+    <div class="card">
+        <h3>⚡ Status Geral de Todos os Chats e Contas Ativas</h3>
+        <p>Abaixo estão listados todos os chats online, conexões ativas e histórico global do servidor:</p>
+        <pre>{{ dados_globais | safe }}</pre>
+        <a href="/adimin/chat/hufg?logout=true"><button style="background:#555;">Sair do Painel</button></a>
+    </div>
+    {% endif %}
+</body>
+</html>
+"""
+
+@app.route('/adimin/chat/hufg', methods=['GET', 'POST'])
+def painel_admin_mestre():
+    if request.args.get('logout'):
+        session.pop('is_admin', None)
+        return redirect(url_for('painel_admin_mestre'))
+        
+    if request.method == 'POST':
+        senha = request.form.get('senha')
+        if senha == SENHA_ADMIN_MESTRE:
+            session['is_admin'] = True
+        else:
+            return render_template_string(ADMIN_PANEL_TEMPLATE, erro="Senha Mestre Incorreta!")
+            
+    if not session.get('is_admin'):
+        return render_template_string(ADMIN_PANEL_TEMPLATE)
+        
+    import json
+    # Consolida dados de todos os chats online e contas ativas do servidor
+    dados_resumo = {
+        "salas_ativas": {
+            g: {
+                "adms_tokens": list(info['adms']),
+                "membros_conectados": [{"token": t, "nome": info['nomes_membros'].get(t, "Desconhecido")} for t in info['membros']],
+                "tokens_banidos": list(info['banidos'])
+            } for g, info in salas_estado.items()
+        },
+        "contas_e_sessoes_registradas": sessoes_ativas,
+        "historico_geral_mensagens": chat_history
+    }
+    
+    return render_template_string(ADMIN_PANEL_TEMPLATE, dados_globais=json.dumps(dados_resumo, indent=4, ensure_ascii=False))
+
 @app.route('/receive', methods=['POST'])
 def receive():
     dados = request.json
@@ -575,20 +651,18 @@ def receive():
     grupo = dados.get('group')
     usuario = dados.get('user')
     tipo = dados.get('type')
+    token = dados.get('token')
     mensagem = dados.get('msg')
 
-    if not grupo or not usuario:
+    if not grupo or not token:
         return jsonify({"status": "error", "message": "Dados obrigatórios ausentes."}), 400
 
-    if grupo in salas_estado and usuario in salas_estado[grupo].get('banidos', set()):
-        return jsonify({"status": "error", "message": "🔒 Código Banido por violação de segurança."}), 403
+    # SEGURANÇA CORRIGIDA: O banimento verifica estritamente o token único do navegador, impossibilitando burlar mudando o nome
+    if grupo in salas_estado and token in salas_estado[grupo].get('banidos', set()):
+        return jsonify({"status": "error", "message": "🔒 Token banido por violação de segurança."}), 403
 
-    if tipo == "ban_command" and mensagem == "banido":
-        if grupo in salas_estado:
-            if usuario in salas_estado[grupo]['membros']:
-                salas_estado[grupo]['membros'].remove(usuario)
-            salas_estado[grupo]['banidos'].add(usuario)
-        return jsonify({"status": "error", "message": "🔒 Código Banido por atividade não autorizada."}), 403
+    # Atualiza registro de sessões ativas globais
+    sessoes_ativas[token] = {"user": usuario, "group": grupo, "last_active": "Online"}
 
     chat_history.append(dados)
     return jsonify({"status": "ok"})
@@ -602,77 +676,107 @@ def join_room_route():
     data = request.json
     g = data.get('group')
     u = data.get('user')
-    if g and u:
+    token = data.get('token')
+    if g and u and token:
         if g not in salas_estado:
-            salas_estado[g] = {'adms': {u}, 'membros': set(), 'banidos': set()}
-        if u not in salas_estado[g]['banidos']:
-            salas_estado[g]['membros'].add(u)
+            # O primeiro criador ganha o token de adm inicial da sala
+            salas_estado[g] = {
+                'adms': {token}, 
+                'membros': set(), 
+                'banidos': set(),
+                'nomes_membros': {}
+            }
+        if token not in salas_estado[g]['banidos']:
+            salas_estado[g]['membros'].add(token)
+            salas_estado[g]['nomes_membros'][token] = u
+            sessoes_ativas[token] = {"user": u, "group": g}
     return jsonify({"status": "ok"})
 
 @app.route('/room_info')
 def room_info():
     g = request.args.get('group')
-    u = request.args.get('user')
+    token = request.args.get('token')
     if g in salas_estado:
-        if u not in salas_estado[g]['membros'] or u in salas_estado[g]['banidos']:
+        if token not in salas_estado[g]['membros'] or token in salas_estado[g]['banidos']:
             return jsonify({"kicked_or_banned": True})
             
+        membros_detalhes = [
+            {
+                "token": t, 
+                "user": salas_estado[g]['nomes_membros'].get(t, "Anônimo"), 
+                "is_adm": t in salas_estado[g]['adms']
+            } for t in salas_estado[g]['membros']
+        ]
+        
         return jsonify({
             "kicked_or_banned": False,
             "qtd": len(salas_estado[g]['membros']),
             "adms": list(salas_estado[g]['adms']),
-            "membros": list(salas_estado[g]['membros'])
+            "membros": membros_detalhes
         })
-    return jsonify({"kicked_or_banned": False, "qtd": 1, "adms": [u], "membros": [u]})
+    return jsonify({"kicked_or_banned": False, "qtd": 1, "adms": [token], "membros": []})
 
 @app.route('/add_adm', methods=['POST'])
 def add_adm():
     data = request.json
-    g, target = data.get('group'), data.get('user')
-    if g in salas_estado and target in salas_estado[g]['membros']:
-        salas_estado[g]['adms'].add(target)
+    g = data.get('group')
+    requester = data.get('token')
+    target = data.get('target_token')
+    if g in salas_estado and requester in salas_estado[g]['adms']:
+        if target in salas_estado[g]['membros']:
+            salas_estado[g]['adms'].add(target)
     return jsonify({"status": "ok"})
 
 @app.route('/remove_adm', methods=['POST'])
 def remove_adm():
     data = request.json
-    g, target = data.get('group'), data.get('user')
-    if g in salas_estado and target in salas_estado[g]['adms']:
-        salas_estado[g]['adms'].remove(target)
+    g = data.get('group')
+    requester = data.get('token')
+    target = data.get('target_token')
+    if g in salas_estado and requester in salas_estado[g]['adms']:
+        if target in salas_estado[g]['adms'] and len(salas_estado[g]['adms']) > 1:
+            salas_estado[g]['adms'].remove(target)
     return jsonify({"status": "ok"})
 
 @app.route('/change_name', methods=['POST'])
 def change_name():
     data = request.json
-    g, old, new = data.get('group'), data.get('old_user'), data.get('new_user')
-    if g in salas_estado:
-        if old in salas_estado[g]['membros']:
-            salas_estado[g]['membros'].remove(old)
-            salas_estado[g]['membros'].add(new)
-        if old in salas_estado[g]['adms']:
-            salas_estado[g]['adms'].remove(old)
-            salas_estado[g]['adms'].add(new)
-        for msg in chat_history:
-            if msg['group'] == g and msg['user'] == old:
-                msg['user'] = new
+    g = data.get('group')
+    token = data.get('token')
+    new = data.get('new_user')
+    if g in salas_estado and token in salas_estado[g]['membros']:
+        if new.lower() != 'admin':
+            salas_estado[g]['nomes_membros'][token] = new
+            if token in sessoes_ativas:
+                sessoes_ativas[token]['user'] = new
+            for msg in chat_history:
+                if msg.get('group') == g and msg.get('token') == token:
+                    msg['user'] = new
     return jsonify({"status": "ok"})
 
 @app.route('/kick', methods=['POST'])
 def kick_user():
     data = request.json
-    g, target = data.get('group'), data.get('user')
-    if g in salas_estado and target in salas_estado[g]['membros']:
-        salas_estado[g]['membros'].remove(target)
+    g = data.get('group')
+    requester = data.get('token')
+    target = data.get('target_token')
+    if g in salas_estado and requester in salas_estado[g]['adms']:
+        if target in salas_estado[g]['membros']:
+            salas_estado[g]['membros'].remove(target)
+            salas_estado[g]['nomes_membros'].pop(target, None)
     return jsonify({"status": "ok"})
 
 @app.route('/ban', methods=['POST'])
 def ban_user():
     data = request.json
-    g, target = data.get('group'), data.get('user')
-    if g in salas_estado:
+    g = data.get('group')
+    requester = data.get('token')
+    target = data.get('target_token')
+    if g in salas_estado and requester in salas_estado[g]['adms']:
         if target in salas_estado[g]['membros']:
             salas_estado[g]['membros'].remove(target)
         salas_estado[g]['banidos'].add(target)
+        salas_estado[g]['nomes_membros'].pop(target, None)
     return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
